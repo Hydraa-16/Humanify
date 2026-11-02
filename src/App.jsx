@@ -1,3 +1,4 @@
+import React from "react";
 import { useRef, useState } from 'react';
 import * as mammoth from 'mammoth';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -89,7 +90,7 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar">
         <a className="brand" href="#top" aria-label="Humanify home"><span className="brand-mark">h</span><span>humanify</span></a>
-        <div className="topbar-right"><span className="privacy-pill"><i /> Local-first workspace</span><a className="github-link" href="https://github.com" target="_blank" rel="noreferrer">GitHub ↗</a></div>
+        <div className="topbar-right"><span className="privacy-pill"><i /> Local-first workspace</span><a className="github-link" href="https://github.com/Hydraa-16/Humanify" target="_blank" rel="noreferrer">GitHub ↗</a></div>
       </header>
 
       <section className="hero" id="top">
