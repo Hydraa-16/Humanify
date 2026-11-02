@@ -1,7 +1,7 @@
 # HUMANIFY — MASTER PROJECT SPECIFICATION
 
-**Document version:** 1.0  
-**Project status:** Phase 1 starter created; development requirements and roadmap defined  
+**Document version:** 1.1
+**Project status:** Phase 1 complete; Phase 2 non-code setup in progress; Phase 2 design baseline approved
 **Project name:** Humanify  
 **Budget constraint:** ₹0 for development and operation; all tools, models, libraries and deployment choices must have a usable free option  
 **Product direction:** Personal-first, then public web application  
@@ -444,3 +444,167 @@ This section is intentionally a holding area. Future ideas should be proposed he
 ---
 
 **Source of truth:** This file is the current master specification for Humanify. When a new ChatGPT Project is created, upload this file and the current source ZIP/repository. At the beginning of future work, check this specification and repository state before proposing or making changes.
+
+## 14. Phase 2 addendum — DOCX document model and round-trip fidelity
+
+**Status:** Approved by project owner on 2026-11-02.
+**Applies to:** Phase 2 only. This addendum clarifies and extends the Phase 2 requirements above; it does not authorize implementation of later phases or change the approved zero-cost, browser-first product principles.
+
+### 14.1 Objective
+
+Build a structured, browser-side DOCX processing pipeline that can inspect DOCX packages, parse supported document structures into an internal model, maintain stable source references, safely replace eligible text while retaining formatting and relationships, preserve unsupported or non-editable structures, and validate exported DOCX packages.
+
+### 14.2 Approved technology decisions
+
+- Retain React 19 and Vite 6.
+- Use JSZip 3.10.2 to inspect and manipulate DOCX ZIP packages.
+- Use browser-native `DOMParser` and `XMLSerializer` for XML parsing and serialization.
+- Use Vitest 4.1.12 for browser-independent unit tests.
+- Use a real browser for validation of native XML APIs, JSZip and browser-side DOCX processing.
+- Do not add jsdom, happy-dom or another DOM emulation dependency at this stage.
+- Do not add further dependencies without justification and owner approval where required by the change-control protocol.
+- Keep processing client-side; do not introduce a backend or paid service.
+
+The dependency versions above record the Phase 2 setup selection. The package manifest and lockfile remain the executable record of installed versions.
+
+### 14.3 Proposed module boundaries
+
+The implementation should remain modular and separate document processing from React UI concerns. The approved logical responsibilities are:
+
+- `src/document/index.js`: narrow public API for UI integration.
+- `src/document/model/documentModel.js` and `documentTypes.js`: canonical document model and type definitions.
+- `src/document/parser/docxPackageReader.js`: open the DOCX package with JSZip and inventory package entries without rewriting them.
+- `src/document/parser/xmlParser.js`: native XML parsing/serialization and parser-error handling; no OOXML business logic.
+- `src/document/parser/relationshipParser.js`: parse relationship parts, relationship IDs, types, targets and target modes.
+- `src/document/parser/documentParser.js`: map package parts into the internal model.
+- `src/document/editor/textReplacement.js`: safe run-aware text replacement and refusal of unsafe edits.
+- `src/document/writer/docxPackageWriter.js`: update only necessary package parts and retain untouched entries and binary assets.
+- `src/document/validation/packageValidator.js`: validate ZIP integrity, required parts, XML, relationships, references and assets.
+- `src/document/validation/preservationReport.js`: classify structures and report limitations.
+- `src/document/utils/sourceAnchors.js`: deterministic source anchors based on package part and structural location.
+- `src/document/utils/textNodes.js`: WordprocessingML text traversal utilities.
+
+This is a logical responsibility map; filenames may be refined during implementation if the responsibilities and architecture remain consistent. Any material architectural change still requires approval.
+
+### 14.4 Internal document model
+
+The model should represent, as applicable, documents, sections, paragraphs, runs, tables, rows, cells, hyperlinks, headers, footers, footnotes, endnotes, drawings, images/assets, styles, numbering and relationships.
+
+Stable model IDs and source anchors are distinct. Source anchors identify the originating package part and structural location. The source DOCX must not be modified merely to insert identifiers.
+
+### 14.5 Run-level replacement policy
+
+The approved strategy is **first-run inheritance**:
+
+1. Identify the exact runs and text span affected by a replacement.
+2. Newly inserted text inherits the formatting of the first replaced run.
+3. Preserve unaffected surrounding runs wherever possible.
+4. Retain hyperlink and package relationships when safe.
+5. Handle whitespace and Unicode deliberately; do not silently normalize or drop content.
+6. Refuse a replacement when the affected range cannot be mapped safely or would damage a protected structure.
+
+### 14.6 OOXML compatibility classifications
+
+Every encountered structure must be assigned one of three handling classes:
+
+1. **Fully supported:** parse, preserve and safely edit.
+2. **Preservation-only:** retain without editing and report the limitation.
+3. **Unsupported:** detect and warn; prevent unsafe processing or export when integrity cannot be guaranteed.
+
+The following initial policy is approved:
+
+| Structure | Classification | Handling |
+|---|---|---|
+| Ordinary paragraphs and runs | Fully supported | Parse text and supported formatting; allow safe replacement. |
+| Tables, rows and cells | Fully supported | Parse and edit eligible cell text; preserve supported table structures and merges. |
+| Supported run formatting | Fully supported | Preserve supported bold, italic, underline, font, size, colour and related properties. |
+| Internal and external hyperlinks | Fully supported | Preserve anchors/targets and relationships; allow safe displayed-text edits. External destinations must not be fetched. |
+| Headers and footers | Fully supported | Parse and edit ordinary eligible text; preserve relationships and section associations. |
+| Footnotes and endnotes | Fully supported | Parse, preserve stable IDs and formatting, support safe text replacement, and validate references and relationships. |
+| Images and drawings | Preservation-only | Retain assets, markup and relationships; do not edit image contents. |
+| Floating images and text wrapping | Preservation-only | Retain positioning and layout markup without attempting to modify it. |
+| Bookmarks | Preservation-only | Preserve boundaries and IDs; avoid replacements that could invalidate ranges. |
+| Simple and complex fields, including TOC and page-number fields | Preservation-only | Preserve field instructions and displayed results; do not rewrite field instructions or calculated results. |
+| Tracked insertions, deletions and formatting revisions | Preservation-only | Preserve unresolved revision markup and content; do not edit text within unresolved revisions. |
+| Content controls | Preservation-only | Preserve control boundaries, properties and contained content; do not edit internal text or control structure. |
+| Comments and comment references | Preservation-only | Preserve content, IDs and anchors; do not edit comments. |
+| Section properties and page layout | Preservation-only | Preserve dimensions, margins, orientation, columns and section boundaries. |
+| Embedded OLE objects and other embedded content | Preservation-only | Retain package assets and relationships without interpreting or modifying embedded content. |
+| Unknown XML elements and extensions | Preservation-only by default | Preserve unchanged. If safe preservation cannot be established for an operation, treat that operation as unsupported. |
+| Malformed XML or broken required relationships | Unsupported | Reject unsafe processing/export rather than silently repairing or discarding content. |
+
+A preservation-only element must remain genuinely untouched. Extracting its text and rebuilding it is not sufficient. A document containing preservation-only structures should remain exportable when those structures can be retained safely. The presence of an unknown element does not automatically invalidate an otherwise safe edit to an unrelated part; assess whether the required package-part modification could damage it.
+
+### 14.7 Export safety rules
+
+Export must be blocked when there is a concrete integrity or preservation risk, including:
+
+- Missing or malformed required DOCX package components.
+- Required relationships targeting missing package parts.
+- A replacement that would invalidate a bookmark, field, revision or other protected structure.
+- Inability to retain a preservation-only structure safely after the requested modification.
+- Failure of generated-package validation.
+
+Do not block export solely because a document contains preservation-only structures if they can be retained safely. Report detected limitations to the user.
+
+### 14.8 Package preservation and serialization
+
+- Preserve untouched package entries wherever possible.
+- Retain images and other binary assets.
+- Preserve relationship IDs and targets unless a deliberate, validated change requires otherwise.
+- Avoid rewriting unrelated XML parts.
+- XML serialization may normalize markup; byte-for-byte identity is not guaranteed. The target is structural and visual preservation.
+- Validate the generated DOCX before presenting it as a successful export.
+
+### 14.9 Testing strategy and synthetic fixtures
+
+Testing has three layers:
+
+1. **Vitest/Node:** browser-independent model logic, source anchors, replacement rules and validation logic.
+2. **Real browser:** native `DOMParser`, `XMLSerializer`, JSZip and end-to-end browser-side DOCX processing.
+3. **Word-compatible rendering:** inspect no-op and edited round-trips in Microsoft Word or LibreOffice.
+
+Use synthetic DOCX fixtures only in the repository. Do not commit personal, academic or otherwise private user documents. Fixtures should cover basic paragraphs, multiple runs, formatting, whitespace, Unicode, long text, tables (including supported merges and nested tables), hyperlinks, images, headers/footers, numbering, sections, footnotes/endnotes, fields, bookmarks, tracked changes, content controls, comments, malformed XML, missing relationships, unknown package entries and large documents. Record fixture provenance or generation steps so failures are reproducible.
+
+Vitest is configured as the unit-test runner. The test command may report no tests until actual test files are added; that is not a passing test suite. Browser validation remains necessary because the Node test environment does not provide the native browser XML APIs used by the application.
+
+### 14.10 Phase 2 development sequence
+
+1. Inspect DOCX ZIP package entries, XML parts and relationships.
+2. Build the internal document model.
+3. Parse supported document structures and preserve reading order.
+4. Implement stable source anchors.
+5. Implement safe run-aware text replacement.
+6. Implement conservative handling and reporting for complex OOXML.
+7. Preserve package parts, relationships, styles, numbering, layout and assets.
+8. Build the synthetic DOCX regression corpus.
+9. Test no-op and edited round-trips, including rendering inspection.
+10. Validate exported packages and report unsupported structures.
+
+No PDF pipeline, OCR, humanization engine, AI detector or full document comparison implementation is authorized by this Phase 2 addendum. Those remain in their existing roadmap phases.
+
+### 14.11 Phase 2 acceptance criteria
+
+Phase 2 is not complete until:
+
+- DOCX packages can be imported into the structured model.
+- Paragraph and table text can be safely edited.
+- Newly inserted text follows first-run inheritance while unaffected runs are retained where possible.
+- No-op import/export preserves supported content and assets.
+- Images and relationships remain intact.
+- Footnotes and endnotes are parsed, preserved and safely editable with stable IDs and validated references.
+- Unsupported and preservation-only structures are detected and reported.
+- Unsafe edits and exports are refused.
+- Generated packages pass structural validation.
+- No-op and edited documents are inspected in a Word-compatible renderer.
+- The production build passes.
+
+A successful build alone is insufficient to declare Phase 2 complete.
+
+### 14.12 Repository and cost constraints
+
+- Keep `main` as the stable branch and use `feature/docx-model` for Phase 2 work.
+- Keep the browser-first, no-backend architecture and ₹0 operating-cost objective.
+- Do not upload document content to external processing services.
+- Do not commit real user documents or private document content.
+- Keep Phase 2 work within the approved roadmap and use the mandatory change-control protocol for material deviations.
